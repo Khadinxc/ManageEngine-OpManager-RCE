@@ -1,4 +1,4 @@
-# ManageEngine OpManager Workflow Remote Code Execution
+# ManageEngine OpManager Workflows - Authenticated Remote Code Execution
 Python3 based command line utility for working with ManageEngine OpManager build number 12.3.150 to abuse the workflows functionality for remote code execution.
 
 
