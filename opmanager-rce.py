@@ -58,7 +58,7 @@ def parse_args():
         "-t",
         "--target",
         required=True,
-        help="Target base URL (e.g. http://ms01 or http://ms01.corp.local)",
+        help="Target base URL (e.g. http://targetserver or http://targetserver.kaiber.local)",
     )
     parser.add_argument(
         "-u",
@@ -86,7 +86,7 @@ def parse_args():
     parser.add_argument(
         "-d",
         "--device",
-        help='Device displayName to target (e.g. "Ms01"). '
+        help='Device displayName to target (e.g. "targetserver"). '
              "If omitted and not listing devices, the script will list devices and exit.",
     )
     parser.add_argument(
@@ -408,7 +408,7 @@ def print_device_list_and_exit(device_list_json):
     log_warn("[!] No -d / --device argument provided.")
     log_info("[*] These devices can be targeted (raw JSON):")
     print_device_list(device_list_json)
-    log_info("\n[*] Re-run the script with -d <displayName> (e.g. -d Ms01)")
+    log_info("\n[*] Re-run the script with -d <displayName> (e.g. -d targetserver)")
     sys.exit(0)
 
 
