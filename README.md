@@ -1,7 +1,34 @@
 # ManageEngine OpManager Workflows - Authenticated Remote Code Execution
 Python3 based command line utility for working with ManageEngine OpManager build number 12.3.150 to abuse the workflows functionality for remote code execution.
 
+---
 
+## Notes and limitations
+
+- This is an **authenticated** exploit: you need valid OpManager credentials.
+- This has only been configured to work against Windows machines, OpManager in this build utilises a different type of workflow for Linux machines and thus would need additional functionality to handle Linux targets too.
+- It relies on a specific workflow structure and logging behaviour:
+  - A task named `"Execute Windows Script"`.
+  - Output logged as `"Script output:\n<...>"`.
+- It assumes the OpManager instance is reachable from the attacking machine and that workflows can be executed on the chosen device.
+- For very large command outputs, OpManager may truncate logs; the exploit will still work, but you may not see the full output.
+
+---
+
+## Safety and lab usage
+
+This PoC is designed for controlled lab environments. Using it against systems without explicit permission is illegal and unethical.
+
+For Lab environments and engagements, the script provides a clear, reproducible chain:
+
+1. Login and apiKey extraction
+2. Enumeration (`--list-workflows`, `--list-devices`)
+3. Workflow hijack (`-wf`, `--base-workflow-id`)
+4. Command execution and proof via logs
+
+---
+
+You can embed the command outputs you’ve captured (such as `whoami /all` and `net users`) directly in your report to demonstrate successful exploitation and privilege level.
 It automates:
 
 1. Full web login flow (including `SettingsServlet` and `j_security_check`)
@@ -433,29 +460,3 @@ This is particularly useful when:
 - The workflow list JSON has a slightly different structure.
 - New OpManager versions change field names or response formats.
 
----
-
-## Notes and limitations
-
-- This is an **authenticated** exploit: you need valid OpManager credentials.
-- This has only been configured to work against Windows machines, OpManager in this build utilises a different type of workflow for Linux machines and thus would need additional functionality to handle Linux targets too.
-- It relies on a specific workflow structure and logging behaviour:
-  - A task named `"Execute Windows Script"`.
-  - Output logged as `"Script output:\n<...>"`.
-- It assumes the OpManager instance is reachable from the attacking machine and that workflows can be executed on the chosen device.
-- For very large command outputs, OpManager may truncate logs; the exploit will still work, but you may not see the full output.
-
----
-
-## Safety and lab usage
-
-This PoC is designed for controlled lab environments. Using it against systems without explicit permission is illegal and unethical.
-
-For Lab environments and engagements, the script provides a clear, reproducible chain:
-
-1. Login and apiKey extraction
-2. Enumeration (`--list-workflows`, `--list-devices`)
-3. Workflow hijack (`-wf`, `--base-workflow-id`)
-4. Command execution and proof via logs
-
-You can embed the command outputs you’ve captured (such as `whoami /all` and `net users`) directly in your report to demonstrate successful exploitation and privilege level.
